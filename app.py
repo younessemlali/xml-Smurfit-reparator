@@ -88,36 +88,36 @@ if files:
     
     if st.button("🚀 Traiter les fichiers", type="primary"):
         results = []
-        zip_buffer = io.BytesIO()
+        processed_files = {}  # Stocker les fichiers traités
         
         progress = st.progress(0)
         
-        with zipfile.ZipFile(zip_buffer, 'w') as zf:
-            for idx, file in enumerate(files):
-                # Mise à jour de la progression
-                progress.progress((idx + 1) / len(files))
-                
-                # Lire le fichier avec gestion d'encodage
-                content = safe_read_file(file)
-                
-                # Traiter le XML
-                result_xml, count_or_error = process_xml_simple(content)
-                
-                if result_xml:
-                    # Succès
-                    zf.writestr(file.name, result_xml)
-                    results.append({
-                        'Fichier': file.name,
-                        'Statut': '✅',
-                        'Balises ajoutées': count_or_error
-                    })
-                else:
-                    # Erreur
-                    results.append({
-                        'Fichier': file.name,
-                        'Statut': '❌',
-                        'Erreur': count_or_error
-                    })
+        for idx, file in enumerate(files):
+            # Mise à jour de la progression
+            progress.progress((idx + 1) / len(files))
+            
+            # Lire le fichier avec gestion d'encodage
+            content = safe_read_file(file)
+            
+            # Traiter le XML
+            result_xml, count_or_error = process_xml_simple(content)
+            
+            if result_xml:
+                # Succès - stocker le contenu traité
+                processed_files[file.name] = result_xml
+                results.append({
+                    'Fichier': file.name,
+                    'Statut': '✅',
+                    'Balises ajoutées': count_or_error,
+                    'Contenu': result_xml
+                })
+            else:
+                # Erreur
+                results.append({
+                    'Fichier': file.name,
+                    'Statut': '❌',
+                    'Erreur': count_or_error
+                })
         
         progress.empty()
         
@@ -135,22 +135,60 @@ if files:
         with col3:
             st.metric("Balises ajoutées", total_tags)
         
+        # Section de téléchargement
+        if success_count > 0:
+            st.write("### 📥 Télécharger les fichiers corrigés")
+            
+            # Option 1: Télécharger individuellement
+            if len(processed_files) == 1:
+                # Un seul fichier - bouton direct
+                file_name, content = list(processed_files.items())[0]
+                st.download_button(
+                    f"📄 Télécharger {file_name}",
+                    data=content.encode('utf-8'),
+                    file_name=f"corrected_{file_name}",
+                    mime="text/xml"
+                )
+            else:
+                # Plusieurs fichiers - créer des colonnes
+                st.write("**Télécharger individuellement :**")
+                
+                # Organiser en colonnes (3 par ligne)
+                for i in range(0, len(processed_files), 3):
+                    cols = st.columns(3)
+                    for j, (file_name, content) in enumerate(list(processed_files.items())[i:i+3]):
+                        if j < len(cols):
+                            with cols[j]:
+                                st.download_button(
+                                    f"📄 {file_name}",
+                                    data=content.encode('utf-8'),
+                                    file_name=f"corrected_{file_name}",
+                                    mime="text/xml",
+                                    key=f"download_{file_name}"
+                                )
+                
+                # Option 2: Télécharger tout en ZIP (optionnel)
+                st.write("**Ou télécharger tout en une fois :**")
+                zip_buffer = io.BytesIO()
+                with zipfile.ZipFile(zip_buffer, 'w') as zf:
+                    for file_name, content in processed_files.items():
+                        zf.writestr(f"corrected_{file_name}", content)
+                
+                zip_buffer.seek(0)
+                st.download_button(
+                    "📦 Télécharger tous les fichiers (ZIP)",
+                    data=zip_buffer.getvalue(),
+                    file_name="xml_corriges.zip",
+                    mime="application/zip"
+                )
+        
         # Détails par fichier
+        st.write("### 📋 Détails du traitement")
         for r in results:
             if r['Statut'] == '✅':
                 st.success(f"✅ **{r['Fichier']}** - {r['Balises ajoutées']} balise(s) ajoutée(s)")
             else:
                 st.error(f"❌ **{r['Fichier']}** - {r.get('Erreur', 'Erreur inconnue')}")
-        
-        # Télécharger le ZIP
-        if success_count > 0:
-            zip_buffer.seek(0)
-            st.download_button(
-                "📥 Télécharger les fichiers corrigés (ZIP)",
-                data=zip_buffer.getvalue(),
-                file_name="xml_corriges.zip",
-                mime="application/zip"
-            )
 
 else:
     st.info("👆 Chargez des fichiers XML pour commencer")
