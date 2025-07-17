@@ -1,10 +1,1 @@
-# Core dependencies
 streamlit==1.37.0
-pandas==2.2.2
-matplotlib==3.8.4
-
-# XML processing with security
-defusedxml==0.7.1
-
-# Note: lxml cannot be installed on Streamlit Cloud due to missing system dependencies
-# If you need lxml locally, install it separately: pip install lxml
