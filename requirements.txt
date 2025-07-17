@@ -1,4 +1,16 @@
+# Core dependencies
 streamlit==1.37.0
-defusedxml==0.7.1
 pandas==2.2.2
 matplotlib==3.8.4
+
+# XML processing with security
+defusedxml==0.7.1
+
+# Optional but recommended for better performance
+lxml==5.1.0  # Alternative XML parser with better namespace support
+openpyxl==3.1.2  # For Excel export functionality if needed
+
+# Development dependencies (optional)
+# pytest==8.2.2
+# black==24.4.2
+# flake8==7.0.0
