@@ -1,24 +1,26 @@
 import re
 import io
-from lxml import etree
+import xml.etree.ElementTree as ET
+import defusedxml.ElementTree as DET
 
 QUOTE_RE = re.compile(r'"([^"]+)"')
 
 def process_xml(file_content: bytes):
-    parser = etree.XMLParser(remove_blank_text=True)
-    tree = etree.parse(io.BytesIO(file_content), parser)
-    root = tree.getroot()
+    root = DET.parse(io.BytesIO(file_content)).getroot()
 
     added = 0
-    for desc in root.xpath("//Description"):
+    for desc in root.iter("Description"):
         text = "".join(desc.itertext())
         match = QUOTE_RE.search(text)
         if match:
             level = match.group(1).strip()
-            parent = desc.getparent()
-            if parent.find("PositionLevel") is None:
-                etree.SubElement(parent, "PositionLevel").text = level
+            parent = desc
+            # Remonter jusqu’au parent "Job" ou racine
+            while parent is not None and parent.find("PositionLevel") is None:
+                parent = parent.getparent() or parent
+            if parent is not None and parent.find("PositionLevel") is None:
+                ET.SubElement(parent, "PositionLevel").text = level
                 added += 1
 
-    output = etree.tostring(tree, pretty_print=True, xml_declaration=True, encoding="utf-8")
-    return output, added
+    # Retourner le XML corrigé
+    return ET.tostring(root, encoding="utf-8"), added
