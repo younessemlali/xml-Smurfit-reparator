@@ -71,35 +71,39 @@ def process_xml_simple(content):
             # Vérifier si c'est une balise Description (ignorer le namespace)
             tag_name = desc.tag.split('}')[-1] if '}' in desc.tag else desc.tag
             
-            if tag_name == 'Description' and desc.text:
-                # Chercher du texte entre guillemets
-                match = QUOTE_PATTERN.search(desc.text)
-                if match:
-                    value = match.group(1)
-                    
-                    # Trouver le parent
-                    parent = parent_map.get(desc, None)
-                    
-                    if parent is not None:
-                        # Vérifier si PositionLevel n'existe pas déjà
-                        position_level_exists = False
-                        for child in parent:
-                            child_tag = child.tag.split('}')[-1] if '}' in child.tag else child.tag
-                            if child_tag == 'PositionLevel':
-                                position_level_exists = True
-                                break
+            if tag_name == 'Description':
+                # Obtenir TOUT le texte de l'élément Description (y compris les sous-éléments)
+                full_text = ''.join(desc.itertext())
+                
+                if full_text:
+                    # Chercher du texte entre guillemets
+                    match = QUOTE_PATTERN.search(full_text)
+                    if match:
+                        value = match.group(1)
                         
-                        if not position_level_exists:
-                            # Créer la nouvelle balise avec le même namespace que le parent
-                            if '}' in parent.tag:
-                                # Extraire le namespace du parent
-                                namespace = parent.tag.split('}')[0] + '}'
-                                pos_level = ET.SubElement(parent, namespace + "PositionLevel")
-                            else:
-                                pos_level = ET.SubElement(parent, "PositionLevel")
+                        # Trouver le parent
+                        parent = parent_map.get(desc, None)
+                        
+                        if parent is not None:
+                            # Vérifier si PositionLevel n'existe pas déjà
+                            position_level_exists = False
+                            for child in parent:
+                                child_tag = child.tag.split('}')[-1] if '}' in child.tag else child.tag
+                                if child_tag == 'PositionLevel':
+                                    position_level_exists = True
+                                    break
                             
-                            pos_level.text = value
-                            count += 1
+                            if not position_level_exists:
+                                # Créer la nouvelle balise avec le même namespace que le parent
+                                if '}' in parent.tag:
+                                    # Extraire le namespace du parent
+                                    namespace = parent.tag.split('}')[0] + '}'
+                                    pos_level = ET.SubElement(parent, namespace + "PositionLevel")
+                                else:
+                                    pos_level = ET.SubElement(parent, "PositionLevel")
+                                
+                                pos_level.text = value
+                                count += 1
         
         # Retourner le XML modifié en préservant la déclaration et l'encodage
         xml_str = ET.tostring(root, encoding='unicode', method='xml')
