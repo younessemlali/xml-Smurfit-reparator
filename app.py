@@ -1,299 +1,243 @@
 import streamlit as st
-import re
 import xml.etree.ElementTree as ET
+import re
 import io
 import zipfile
+from xml.dom import minidom
 
-st.set_page_config(page_title="XML Reparator", page_icon="🔧")
+st.set_page_config(page_title="XML Smurfit Reparator V2", page_icon="🔧")
 
-st.title("🔧 XML Smurfit Reparator")
-st.write("Corrige les balises PositionLevel dans vos fichiers XML")
+st.title("🔧 XML Smurfit Reparator V2")
+st.write("Corrige et met à jour les balises PositionLevel dans vos fichiers XML")
 
-# Expression régulière pour trouver le texte entre guillemets
-QUOTE_PATTERN = re.compile(r'"([^"]+)"')
+# Pattern pour trouver les valeurs entre guillemets (format: Lettre - Description)
+LEVEL_PATTERN = re.compile(r'"([A-Z]\s*-\s*[^"]+)"')
 
-def safe_read_file(file):
-    """Lit un fichier uploadé en gérant les problèmes d'encodage."""
-    content = file.read()
+def prettify_xml(elem):
+    """Retourne une version pretty-printed du XML."""
+    rough_string = ET.tostring(elem, encoding='unicode')
+    reparsed = minidom.parseString(rough_string)
+    return reparsed.toprettyxml(indent="  ")
+
+def find_position_level_value(text):
+    """Trouve la valeur de niveau de position dans le texte."""
+    if not text:
+        return None
     
-    # Si c'est déjà une string, la retourner
-    if isinstance(content, str):
-        return content
+    # Chercher toutes les correspondances
+    matches = LEVEL_PATTERN.findall(text)
     
-    # Essayer différents encodages
-    encodings = ['utf-8', 'utf-8-sig', 'latin-1', 'cp1252', 'iso-8859-1']
+    # Retourner la dernière correspondance trouvée (généralement la bonne)
+    if matches:
+        return matches[-1].strip()
     
-    for encoding in encodings:
-        try:
-            return content.decode(encoding)
-        except UnicodeDecodeError:
-            continue
-    
-    # En dernier recours, ignorer les erreurs
-    return content.decode('utf-8', errors='ignore')
+    return None
 
-def process_xml_simple(content):
-    """Traite un fichier XML et ajoute les balises PositionLevel manquantes."""
+def process_xml_robust(content):
+    """Traite le XML de manière robuste."""
     try:
-        # Enregistrer les namespaces présents dans le document
-        namespaces = {}
-        
-        # Pré-parser pour extraire les namespaces
-        for event, elem in ET.iterparse(io.StringIO(content), events=['start-ns']):
-            prefix, uri = elem
-            if prefix:
-                namespaces[prefix] = uri
-            else:
-                # Namespace par défaut
-                namespaces['default'] = uri
-        
         # Parser le XML
-        root = ET.fromstring(content)
-        count = 0
+        tree = ET.ElementTree(ET.fromstring(content))
+        root = tree.getroot()
         
-        # Si on a un namespace par défaut, l'enregistrer
-        if 'default' in namespaces:
-            ET.register_namespace('', namespaces['default'])
+        modifications = []
+        total_modified = 0
         
-        # Enregistrer tous les autres namespaces
-        for prefix, uri in namespaces.items():
-            if prefix != 'default':
-                ET.register_namespace(prefix, uri)
-        
-        # Créer un mapping parent-enfant pour trouver les parents
-        parent_map = {}
-        for parent in root.iter():
-            for child in parent:
-                parent_map[child] = parent
-        
-        # Parcourir toutes les balises Description (avec ou sans namespace)
-        for desc in root.iter():
-            # Vérifier si c'est une balise Description (ignorer le namespace)
-            tag_name = desc.tag.split('}')[-1] if '}' in desc.tag else desc.tag
+        # Parcourir TOUS les éléments du XML
+        for element in root.iter():
+            # Chercher les éléments qui contiennent Description
+            description_elem = None
+            position_level_elem = None
             
-            if tag_name == 'Description':
-                # Obtenir TOUT le texte de l'élément Description (y compris les sous-éléments)
-                full_text = ''.join(desc.itertext())
+            # Chercher Description et PositionLevel parmi les enfants
+            for child in element:
+                tag_name = child.tag.split('}')[-1] if '}' in child.tag else child.tag
                 
-                if full_text:
-                    # Chercher du texte entre guillemets
-                    match = QUOTE_PATTERN.search(full_text)
-                    if match:
-                        value = match.group(1)
+                if tag_name == 'Description':
+                    description_elem = child
+                elif tag_name == 'PositionLevel':
+                    position_level_elem = child
+            
+            # Si on a trouvé une Description
+            if description_elem is not None:
+                # Récupérer tout le texte de Description
+                full_text = ''.join(description_elem.itertext())
+                
+                # Chercher la valeur du niveau
+                level_value = find_position_level_value(full_text)
+                
+                if level_value:
+                    # Cas 1: PositionLevel n'existe pas - on le crée
+                    if position_level_elem is None:
+                        # Créer avec le même namespace que Description si nécessaire
+                        if '}' in description_elem.tag:
+                            namespace = description_elem.tag.split('}')[0] + '}'
+                            new_elem = ET.SubElement(element, namespace + 'PositionLevel')
+                        else:
+                            new_elem = ET.SubElement(element, 'PositionLevel')
                         
-                        # Trouver le parent
-                        parent = parent_map.get(desc, None)
-                        
-                        if parent is not None:
-                            # Vérifier si PositionLevel n'existe pas déjà
-                            position_level_exists = False
-                            for child in parent:
-                                child_tag = child.tag.split('}')[-1] if '}' in child.tag else child.tag
-                                if child_tag == 'PositionLevel':
-                                    position_level_exists = True
-                                    break
-                            
-                            if not position_level_exists:
-                                # Créer la nouvelle balise avec le même namespace que le parent
-                                if '}' in parent.tag:
-                                    # Extraire le namespace du parent
-                                    namespace = parent.tag.split('}')[0] + '}'
-                                    pos_level = ET.SubElement(parent, namespace + "PositionLevel")
-                                else:
-                                    pos_level = ET.SubElement(parent, "PositionLevel")
-                                
-                                pos_level.text = value
-                                count += 1
+                        new_elem.text = level_value
+                        modifications.append(f"Ajouté: {level_value}")
+                        total_modified += 1
+                    
+                    # Cas 2: PositionLevel existe mais avec une valeur différente
+                    else:
+                        current_value = (position_level_elem.text or '').strip()
+                        if current_value != level_value:
+                            position_level_elem.text = level_value
+                            modifications.append(f"Mis à jour: '{current_value}' → '{level_value}'")
+                            total_modified += 1
         
-        # Retourner le XML modifié en préservant la déclaration et l'encodage
-        xml_str = ET.tostring(root, encoding='unicode', method='xml')
+        # Convertir en string avec indentation
+        result_xml = ET.tostring(root, encoding='unicode', method='xml')
         
-        # Préserver la déclaration XML originale si elle existe
-        if content.strip().startswith('<?xml'):
-            original_declaration = content.split('?>')[0] + '?>'
-            if not xml_str.startswith('<?xml'):
-                xml_str = original_declaration + '\n' + xml_str
-        elif not xml_str.startswith('<?xml'):
-            xml_str = '<?xml version="1.0" encoding="UTF-8"?>\n' + xml_str
+        # Ajouter la déclaration XML si nécessaire
+        if not result_xml.startswith('<?xml'):
+            result_xml = '<?xml version="1.0" encoding="UTF-8"?>\n' + result_xml
         
-        return xml_str, count
-    
-    except ET.ParseError as e:
-        return None, f"Erreur de parsing XML: {str(e)}"
+        return result_xml, total_modified, modifications
+        
     except Exception as e:
-        return None, f"Erreur: {str(e)}"
+        return None, 0, [f"Erreur: {str(e)}"]
 
-# Upload de fichiers
-files = st.file_uploader(
-    "Choisissez vos fichiers XML", 
-    type=['xml'], 
+# Interface utilisateur
+uploaded_files = st.file_uploader(
+    "Choisissez vos fichiers XML",
+    type=['xml'],
     accept_multiple_files=True
 )
 
-if files:
-    st.write(f"📁 {len(files)} fichier(s) chargé(s)")
+if uploaded_files:
+    st.write(f"📁 {len(uploaded_files)} fichier(s) chargé(s)")
+    
+    # Afficher un aperçu du premier fichier pour debug
+    with st.expander("🔍 Aperçu du premier fichier (100 premières lignes)"):
+        first_file_content = uploaded_files[0].read().decode('utf-8', errors='ignore')
+        lines = first_file_content.split('\n')[:100]
+        st.code('\n'.join(lines), language='xml')
+        uploaded_files[0].seek(0)  # Remettre le curseur au début
     
     if st.button("🚀 Traiter les fichiers", type="primary"):
-        results = []
-        processed_files = {}  # Stocker les fichiers traités
+        all_results = []
         
-        progress = st.progress(0)
-        
-        for idx, file in enumerate(files):
-            # Mise à jour de la progression
-            progress.progress((idx + 1) / len(files))
-            
-            # Lire le fichier avec gestion d'encodage
-            content = safe_read_file(file)
+        for file in uploaded_files:
+            # Lire le contenu
+            content = file.read().decode('utf-8', errors='ignore')
             
             # Traiter le XML
-            result_xml, count_or_error = process_xml_simple(content)
+            result_xml, modified_count, modifications = process_xml_robust(content)
             
             if result_xml:
-                # Succès - stocker le contenu traité
-                processed_files[file.name] = result_xml
-                results.append({
-                    'Fichier': file.name,
-                    'Statut': '✅',
-                    'Balises ajoutées': count_or_error,
-                    'Contenu': result_xml
+                # Créer un conteneur pour ce fichier
+                with st.container():
+                    st.write(f"### 📄 {file.name}")
+                    
+                    col1, col2 = st.columns([1, 3])
+                    
+                    with col1:
+                        if modified_count > 0:
+                            st.success(f"✅ {modified_count} modification(s)")
+                        else:
+                            st.warning("⚠️ Aucune modification")
+                    
+                    with col2:
+                        # Afficher les détails des modifications
+                        if modifications and modified_count > 0:
+                            with st.expander("Voir les détails"):
+                                for mod in modifications[:10]:  # Limiter à 10 pour l'affichage
+                                    st.write(f"• {mod}")
+                                if len(modifications) > 10:
+                                    st.write(f"... et {len(modifications) - 10} autres")
+                    
+                    # Bouton de téléchargement pour ce fichier
+                    if modified_count > 0:
+                        st.download_button(
+                            f"💾 Télécharger {file.name} modifié",
+                            data=result_xml.encode('utf-8'),
+                            file_name=f"modified_{file.name}",
+                            mime="text/xml",
+                            key=f"download_{file.name}"
+                        )
+                    
+                    st.markdown("---")
+                
+                all_results.append({
+                    'file': file.name,
+                    'content': result_xml,
+                    'modified': modified_count
                 })
             else:
-                # Erreur
-                results.append({
-                    'Fichier': file.name,
-                    'Statut': '❌',
-                    'Erreur': count_or_error
-                })
+                st.error(f"❌ Erreur avec {file.name}: {modifications[0] if modifications else 'Erreur inconnue'}")
         
-        progress.empty()
-        
-        # Afficher les résultats
-        st.write("### 📊 Résultats")
-        
-        success_count = sum(1 for r in results if r['Statut'] == '✅')
-        total_changes = sum(r.get('Balises ajoutées', 0) for r in results if r['Statut'] == '✅')
-        
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Fichiers traités", len(files))
-        with col2:
-            st.metric("Succès", success_count)
-        with col3:
-            st.metric("Modifications totales", total_changes)
-        
-        # Section de téléchargement
-        if success_count > 0:
-            st.write("### 📥 Télécharger les fichiers corrigés")
+        # Option pour télécharger tous les fichiers modifiés
+        modified_files = [r for r in all_results if r['modified'] > 0]
+        if len(modified_files) > 1:
+            st.write("### 📦 Télécharger tous les fichiers modifiés")
             
-            # Option 1: Télécharger individuellement
-            if len(processed_files) == 1:
-                # Un seul fichier - bouton direct
-                file_name, content = list(processed_files.items())[0]
-                st.download_button(
-                    f"📄 Télécharger {file_name}",
-                    data=content.encode('utf-8'),
-                    file_name=f"corrected_{file_name}",
-                    mime="text/xml"
-                )
-            else:
-                # Plusieurs fichiers - créer des colonnes
-                st.write("**Télécharger individuellement :**")
-                
-                # Organiser en colonnes (3 par ligne)
-                for i in range(0, len(processed_files), 3):
-                    cols = st.columns(3)
-                    for j, (file_name, content) in enumerate(list(processed_files.items())[i:i+3]):
-                        if j < len(cols):
-                            with cols[j]:
-                                st.download_button(
-                                    f"📄 {file_name}",
-                                    data=content.encode('utf-8'),
-                                    file_name=f"corrected_{file_name}",
-                                    mime="text/xml",
-                                    key=f"download_{file_name}"
-                                )
-                
-                # Option 2: Télécharger tout en ZIP (optionnel)
-                st.write("**Ou télécharger tout en une fois :**")
-                zip_buffer = io.BytesIO()
-                with zipfile.ZipFile(zip_buffer, 'w') as zf:
-                    for file_name, content in processed_files.items():
-                        zf.writestr(f"corrected_{file_name}", content)
-                
-                zip_buffer.seek(0)
-                st.download_button(
-                    "📦 Télécharger tous les fichiers (ZIP)",
-                    data=zip_buffer.getvalue(),
-                    file_name="xml_corriges.zip",
-                    mime="application/zip"
-                )
-        
-        # Détails par fichier
-        st.write("### 📋 Détails du traitement")
-        for r in results:
-            if r['Statut'] == '✅':
-                msg = f"✅ **{r['Fichier']}** - {r['Balises ajoutées']} modification(s)"
-                
-                # Ajouter les stats si disponibles
-                if 'Stats' in r and r['Stats']:
-                    stats = r['Stats']
-                    msg += f"\n   - Descriptions trouvées : {stats['descriptions']}"
-                    msg += f"\n   - PositionLevel ajoutés : {stats['added']}"
-                    msg += f"\n   - PositionLevel mis à jour : {stats['updated']}"
-                    msg += f"\n   - **Total des modifications : {stats['total']}**"
-                
-                st.success(msg)
-            else:
-                st.error(f"❌ **{r['Fichier']}** - {r.get('Erreur', 'Erreur inconnue')}")
+            zip_buffer = io.BytesIO()
+            with zipfile.ZipFile(zip_buffer, 'w') as zf:
+                for result in modified_files:
+                    zf.writestr(f"modified_{result['file']}", result['content'])
+            
+            zip_buffer.seek(0)
+            st.download_button(
+                "📦 Télécharger tous les fichiers modifiés (ZIP)",
+                data=zip_buffer.getvalue(),
+                file_name="all_modified_files.zip",
+                mime="application/zip"
+            )
 
 else:
     st.info("👆 Chargez des fichiers XML pour commencer")
     
-    # Exemple
-    st.write("### 📝 Exemple de fichier XML")
-    st.write("L'application transforme ceci :")
+    # Exemple et instructions
+    st.write("### 📋 Instructions")
+    st.write("""
+    Cette application :
+    1. **Recherche** les valeurs entre guillemets au format "Lettre - Description" dans les balises `<Description>`
+    2. **Ajoute** une balise `<PositionLevel>` si elle n'existe pas
+    3. **Met à jour** la balise `<PositionLevel>` si elle existe avec une valeur différente
     
-    example_before = """<Job>
-    <Description>Poste "A - Débutant"</Description>
-    <Salary>25000</Salary>
-</Job>"""
-    
-    example_after = """<Job>
-    <Description>Poste "A - Débutant"</Description>
-    <Salary>25000</Salary>
-    <PositionLevel>A - Débutant</PositionLevel>
-</Job>"""
+    **Exemple de transformation :**
+    """)
     
     col1, col2 = st.columns(2)
+    
     with col1:
         st.write("**Avant :**")
-        st.code(example_before, language='xml')
+        st.code("""<Job>
+  <Description>
+    Poste niveau "B - Qualifié"
+  </Description>
+  <PositionLevel>B</PositionLevel>
+</Job>""", language='xml')
     
     with col2:
         st.write("**Après :**")
-        st.code(example_after, language='xml')
+        st.code("""<Job>
+  <Description>
+    Poste niveau "B - Qualifié"
+  </Description>
+  <PositionLevel>B - Qualifié</PositionLevel>
+</Job>""", language='xml')
     
-    # Fichier d'exemple complet
-    example_full = """<?xml version="1.0" encoding="UTF-8"?>
+    # Fichier de test
+    test_xml = """<?xml version="1.0" encoding="UTF-8"?>
 <Jobs>
     <Job>
-        <Description>Poste "A - Débutant"</Description>
+        <Description>Opérateur machine "A - Peu Qualifié"</Description>
+        <PositionLevel>A</PositionLevel>
         <Salary>25000</Salary>
     </Job>
     <Job>
-        <Description>Poste "B - Confirmé"</Description>
-        <Salary>35000</Salary>
-    </Job>
-    <Job>
-        <Description>Manager "C - Expert"</Description>
+        <Description>Technicien senior "C - Très Qualifié"</Description>
         <Salary>45000</Salary>
     </Job>
 </Jobs>"""
     
     st.download_button(
-        "📥 Télécharger un fichier d'exemple",
-        data=example_full.encode('utf-8'),
-        file_name="exemple_smurfit.xml",
+        "📥 Télécharger un fichier de test",
+        data=test_xml.encode('utf-8'),
+        file_name="test_smurfit.xml",
         mime="text/xml"
     )
