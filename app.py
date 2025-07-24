@@ -233,7 +233,16 @@ if files:
         st.write("### 📋 Détails du traitement")
         for r in results:
             if r['Statut'] == '✅':
-                st.success(f"✅ **{r['Fichier']}** - {r['Balises ajoutées']} balise(s) ajoutée(s)")
+                msg = f"✅ **{r['Fichier']}** - {r['Balises ajoutées']} balise(s) ajoutée(s)"
+                
+                # Ajouter les stats si disponibles
+                if 'Stats' in r and r['Stats']:
+                    stats = r['Stats']
+                    msg += f"\n   - Descriptions trouvées : {stats['descriptions']}"
+                    msg += f"\n   - PositionLevel déjà présents : {stats['already_present']}"
+                    msg += f"\n   - PositionLevel ajoutés : {stats['added']}"
+                
+                st.success(msg)
             else:
                 st.error(f"❌ **{r['Fichier']}** - {r.get('Erreur', 'Erreur inconnue')}")
 
