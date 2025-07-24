@@ -1,40 +1,33 @@
 import streamlit as st
 import re
-import chardet
 
 st.set_page_config(page_title="XML Smurfit Reparator", page_icon="🔧", layout="wide")
 
 st.title("🔧 XML Smurfit Reparator - Version Robuste")
 st.markdown("Mise à jour automatique des balises PositionLevel dans vos fichiers XML")
 
-def detect_encoding(file_bytes):
-    """Détecte l'encodage du fichier de manière fiable."""
-    # Utiliser chardet pour détecter l'encodage
-    result = chardet.detect(file_bytes)
-    encoding = result['encoding']
-    confidence = result['confidence']
-    
-    # Si la confiance est faible, essayer des encodages courants
-    if confidence < 0.7:
-        for enc in ['utf-8', 'latin-1', 'cp1252']:
-            try:
-                file_bytes.decode(enc)
-                return enc
-            except:
-                continue
-    
-    return encoding or 'utf-8'
-
 def safe_decode(file_bytes):
-    """Décode le fichier de manière sûre."""
-    # Détecter l'encodage
-    encoding = detect_encoding(file_bytes)
+    """Décode le fichier de manière sûre en essayant plusieurs encodages."""
+    # Liste des encodages à essayer dans l'ordre
+    encodings = [
+        'utf-8',
+        'utf-8-sig',  # UTF-8 avec BOM
+        'latin-1',
+        'iso-8859-1',
+        'cp1252',
+        'windows-1252',
+        'ascii'
+    ]
     
-    try:
-        return file_bytes.decode(encoding), encoding
-    except:
-        # En dernier recours, utf-8 avec remplacement
-        return file_bytes.decode('utf-8', errors='replace'), 'utf-8 (fallback)'
+    for encoding in encodings:
+        try:
+            content = file_bytes.decode(encoding)
+            return content, encoding
+        except (UnicodeDecodeError, LookupError):
+            continue
+    
+    # En dernier recours, forcer UTF-8 avec remplacement
+    return file_bytes.decode('utf-8', errors='replace'), 'utf-8 (avec remplacement)'
 
 def process_xml_robust(content):
     """Traite le XML ligne par ligne pour une robustesse maximale."""
