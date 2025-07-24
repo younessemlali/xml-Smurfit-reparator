@@ -172,7 +172,7 @@ if files:
         st.write("### 📊 Résultats")
         
         success_count = sum(1 for r in results if r['Statut'] == '✅')
-        total_tags = sum(r.get('Balises ajoutées', 0) for r in results if r['Statut'] == '✅')
+        total_changes = sum(r.get('Balises ajoutées', 0) for r in results if r['Statut'] == '✅')
         
         col1, col2, col3 = st.columns(3)
         with col1:
@@ -180,7 +180,7 @@ if files:
         with col2:
             st.metric("Succès", success_count)
         with col3:
-            st.metric("Balises ajoutées", total_tags)
+            st.metric("Modifications totales", total_changes)
         
         # Section de téléchargement
         if success_count > 0:
@@ -233,14 +233,15 @@ if files:
         st.write("### 📋 Détails du traitement")
         for r in results:
             if r['Statut'] == '✅':
-                msg = f"✅ **{r['Fichier']}** - {r['Balises ajoutées']} balise(s) ajoutée(s)"
+                msg = f"✅ **{r['Fichier']}** - {r['Balises ajoutées']} modification(s)"
                 
                 # Ajouter les stats si disponibles
                 if 'Stats' in r and r['Stats']:
                     stats = r['Stats']
                     msg += f"\n   - Descriptions trouvées : {stats['descriptions']}"
-                    msg += f"\n   - PositionLevel déjà présents : {stats['already_present']}"
                     msg += f"\n   - PositionLevel ajoutés : {stats['added']}"
+                    msg += f"\n   - PositionLevel mis à jour : {stats['updated']}"
+                    msg += f"\n   - **Total des modifications : {stats['total']}**"
                 
                 st.success(msg)
             else:
