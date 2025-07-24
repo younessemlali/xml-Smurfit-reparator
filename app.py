@@ -35,9 +35,30 @@ def safe_read_file(file):
 def process_xml_simple(content):
     """Traite un fichier XML et ajoute les balises PositionLevel manquantes."""
     try:
+        # Enregistrer les namespaces présents dans le document
+        namespaces = {}
+        
+        # Pré-parser pour extraire les namespaces
+        for event, elem in ET.iterparse(io.StringIO(content), events=['start-ns']):
+            prefix, uri = elem
+            if prefix:
+                namespaces[prefix] = uri
+            else:
+                # Namespace par défaut
+                namespaces['default'] = uri
+        
         # Parser le XML
         root = ET.fromstring(content)
         count = 0
+        
+        # Si on a un namespace par défaut, l'enregistrer
+        if 'default' in namespaces:
+            ET.register_namespace('', namespaces['default'])
+        
+        # Enregistrer tous les autres namespaces
+        for prefix, uri in namespaces.items():
+            if prefix != 'default':
+                ET.register_namespace(prefix, uri)
         
         # Créer un mapping parent-enfant pour trouver les parents
         parent_map = {}
@@ -45,9 +66,12 @@ def process_xml_simple(content):
             for child in parent:
                 parent_map[child] = parent
         
-        # Parcourir toutes les balises Description
-        for desc in root.iter('Description'):
-            if desc.text:
+        # Parcourir toutes les balises Description (avec ou sans namespace)
+        for desc in root.iter():
+            # Vérifier si c'est une balise Description (ignorer le namespace)
+            tag_name = desc.tag.split('}')[-1] if '}' in desc.tag else desc.tag
+            
+            if tag_name == 'Description' and desc.text:
                 # Chercher du texte entre guillemets
                 match = QUOTE_PATTERN.search(desc.text)
                 if match:
@@ -58,15 +82,34 @@ def process_xml_simple(content):
                     
                     if parent is not None:
                         # Vérifier si PositionLevel n'existe pas déjà
-                        if parent.find("PositionLevel") is None:
-                            # Créer la nouvelle balise
-                            pos_level = ET.SubElement(parent, "PositionLevel")
+                        position_level_exists = False
+                        for child in parent:
+                            child_tag = child.tag.split('}')[-1] if '}' in child.tag else child.tag
+                            if child_tag == 'PositionLevel':
+                                position_level_exists = True
+                                break
+                        
+                        if not position_level_exists:
+                            # Créer la nouvelle balise avec le même namespace que le parent
+                            if '}' in parent.tag:
+                                # Extraire le namespace du parent
+                                namespace = parent.tag.split('}')[0] + '}'
+                                pos_level = ET.SubElement(parent, namespace + "PositionLevel")
+                            else:
+                                pos_level = ET.SubElement(parent, "PositionLevel")
+                            
                             pos_level.text = value
                             count += 1
         
-        # Retourner le XML modifié avec déclaration
+        # Retourner le XML modifié en préservant la déclaration et l'encodage
         xml_str = ET.tostring(root, encoding='unicode', method='xml')
-        if not xml_str.startswith('<?xml'):
+        
+        # Préserver la déclaration XML originale si elle existe
+        if content.strip().startswith('<?xml'):
+            original_declaration = content.split('?>')[0] + '?>'
+            if not xml_str.startswith('<?xml'):
+                xml_str = original_declaration + '\n' + xml_str
+        elif not xml_str.startswith('<?xml'):
             xml_str = '<?xml version="1.0" encoding="UTF-8"?>\n' + xml_str
         
         return xml_str, count
