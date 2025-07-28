@@ -23,8 +23,8 @@ def process_xml_file(content, debug=False):
     while i < len(lines):
         line = lines[i]
         
-        # Détecter une ligne avec Description (avec ou sans namespace)
-        if 'Description>' in line and '<' in line and not '</' in line[:line.find('Description>')]:
+        # Détecter une ligne avec Description (SANS namespace maintenant)
+        if '<Description>' in line:
             if debug:
                 st.info(f"📍 Ligne {i}: Trouvé une balise Description")
                 st.code(line)
@@ -34,12 +34,11 @@ def process_xml_file(content, debug=False):
             start_idx = i
             
             # Si la description continue sur plusieurs lignes
-            while '</Description>' not in desc_content and '< /Description>' not in desc_content and i < len(lines) - 1:
+            while '</Description>' not in desc_content and i < len(lines) - 1:
                 i += 1
                 desc_content += ' ' + lines[i]
             
             # Chercher la valeur entre guillemets
-            # Pattern pour "X - quelque chose"
             all_quotes = re.findall(r'"([^"]+)"', desc_content)
             if debug and all_quotes:
                 st.write(f"Toutes les valeurs entre guillemets trouvées: {all_quotes}")
@@ -58,14 +57,14 @@ def process_xml_file(content, debug=False):
                 
                 # Chercher dans les 20 prochaines lignes max
                 while j < min(i + 20, len(lines)):
-                    if 'PositionLevel>' in lines[j] and '<' in lines[j]:
+                    if '<PositionLevel>' in lines[j] and '</PositionLevel>' in lines[j]:
                         found_position_level = True
                         if debug:
                             st.info(f"📍 Ligne {j}: Trouvé PositionLevel")
                             st.code(lines[j])
                         
                         # Extraire la valeur actuelle
-                        current_match = re.search(r'>([^<]+)<', lines[j])
+                        current_match = re.search(r'<PositionLevel>([^<]*)</PositionLevel>', lines[j])
                         if current_match:
                             current_value = current_match.group(1).strip()
                             if debug:
@@ -75,16 +74,14 @@ def process_xml_file(content, debug=False):
                             
                             # Si différent, mettre à jour
                             if current_value != position_value:
-                                # Remplacer la ligne entière en gardant l'indentation et les tags
-                                old_line = lines[j]
-                                # Utiliser une approche plus robuste pour remplacer
-                                new_line = re.sub(r'(>)[^<]*(</)', r'\1' + position_value + r'\2', old_line)
-                                lines[j] = new_line
+                                # Garder l'indentation
+                                indent = re.match(r'^(\s*)', lines[j]).group(1)
+                                lines[j] = f"{indent}<PositionLevel>{position_value}</PositionLevel>"
                                 
                                 if debug:
                                     st.warning(f"Modification effectuée:")
-                                    st.code(f"Avant: {old_line}")
-                                    st.code(f"Après: {new_line}")
+                                    st.code(f"Avant: {current_value}")
+                                    st.code(f"Après: {position_value}")
                                 
                                 modified = True
                                 modifications_detail.append({
@@ -94,8 +91,8 @@ def process_xml_file(content, debug=False):
                                 })
                         break
                     
-                    # Si on trouve un nouveau Job ou WorkSite, arrêter
-                    if any(tag in lines[j] for tag in ['<Job>', '<Job ', '<WorkSite>', '<WorkSite ', '</Job>', '</WorkSite>']):
+                    # Si on trouve un nouveau Job, arrêter
+                    if '<Job>' in lines[j] or '</Job>' in lines[j]:
                         break
                     
                     j += 1
@@ -105,30 +102,29 @@ def process_xml_file(content, debug=False):
                     if debug:
                         st.warning(f"⚠️ PositionLevel non trouvé, il faut l'ajouter")
                     
-                    # Chercher où l'insérer (idéalement après PositionStatus)
+                    # Chercher où l'insérer
                     insert_line = i + 1
                     indent = "    "
                     
-                    # Chercher PositionStatus ou PositionTitle
+                    # Chercher après PositionStatus ou PositionTitle
                     k = i + 1
                     while k < min(i + 20, len(lines)):
-                        if any(tag in lines[k] for tag in ['</PositionStatus>', '</PositionTitle>', '</PositionCharacteristics>']):
+                        if '</PositionStatus>' in lines[k]:
                             insert_line = k + 1
-                            # Récupérer l'indentation
+                            indent_match = re.match(r'^(\s*)', lines[k])
+                            if indent_match:
+                                indent = indent_match.group(1)
+                            break
+                        elif '</PositionTitle>' in lines[k]:
+                            insert_line = k + 1
                             indent_match = re.match(r'^(\s*)', lines[k])
                             if indent_match:
                                 indent = indent_match.group(1)
                             break
                         k += 1
                     
-                    # Déterminer le namespace
-                    namespace = ""
-                    ns_match = re.search(r'<(ns\d+:)?Description', desc_content)
-                    if ns_match and ns_match.group(1):
-                        namespace = ns_match.group(1)
-                    
-                    # Insérer la nouvelle ligne
-                    new_line = f"{indent}<{namespace}PositionLevel>{position_value}</{namespace}PositionLevel>"
+                    # Insérer la nouvelle ligne SANS namespace
+                    new_line = f"{indent}<PositionLevel>{position_value}</PositionLevel>"
                     lines.insert(insert_line, new_line)
                     
                     if debug:
@@ -144,7 +140,7 @@ def process_xml_file(content, debug=False):
                     # Ajuster l'index car on a inséré une ligne
                     i += 1
             elif debug:
-                st.warning(f"❌ Aucune valeur au format 'X - Description' trouvée dans: {desc_content[:100]}...")
+                st.warning(f"❌ Aucune valeur au format 'X - Description' trouvée")
         
         i += 1
     
@@ -206,7 +202,7 @@ if uploaded_files:
             
             # Traiter le fichier
             try:
-                modified_content, mod_count, modifications = process_xml_file(content)
+                modified_content, mod_count, modifications = process_xml_file(content, debug=debug_mode)
                 total_modifications += mod_count
                 
                 # Sauvegarder pour le ZIP
