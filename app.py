@@ -1,33 +1,77 @@
 import streamlit as st
 import re
+import io
+import zipfile
 
 st.set_page_config(page_title="XML Smurfit Reparator", page_icon="🔧", layout="wide")
 
 st.title("🔧 XML Smurfit Reparator - Version Robuste")
-st.markdown("Mise à jour automatique des balises PositionLevel dans vos fichiers XML")
+st.markdown("Mise à jour automatique des balises PositionLevel dans vos fichiers XML (ISO-8859-1)")
+
+def detect_xml_encoding(file_bytes):
+    """Détecte l'encodage déclaré dans l'en-tête XML."""
+    try:
+        # Lire le début du fichier pour trouver la déclaration
+        header = file_bytes[:500].decode('ascii', errors='ignore')
+        
+        # Chercher la déclaration d'encodage
+        match = re.search(r'encoding\s*=\s*["\']([^"\']+)["\']', header, re.IGNORECASE)
+        if match:
+            declared_encoding = match.group(1).lower()
+            
+            # Normaliser les noms d'encodage
+            encoding_map = {
+                'iso-8859-1': 'iso-8859-1',
+                'iso88591': 'iso-8859-1',
+                'latin1': 'iso-8859-1',
+                'latin-1': 'iso-8859-1',
+                'utf-8': 'utf-8',
+                'utf8': 'utf-8'
+            }
+            
+            return encoding_map.get(declared_encoding, declared_encoding)
+    except:
+        pass
+    
+    # Par défaut pour vos fichiers
+    return 'iso-8859-1'
 
 def safe_decode(file_bytes):
-    """Décode le fichier de manière sûre en essayant plusieurs encodages."""
-    # Liste des encodages à essayer dans l'ordre
+    """Décode le fichier de manière sûre en priorisant ISO-8859-1."""
+    # D'abord, vérifier l'encodage déclaré dans le XML
+    declared_encoding = detect_xml_encoding(file_bytes)
+    
+    # Liste des encodages à essayer (ISO-8859-1 en premier maintenant)
     encodings = [
+        declared_encoding,  # L'encodage déclaré en premier
+        'iso-8859-1',       # Votre standard
+        'windows-1252',     # Proche de ISO-8859-1
         'utf-8',
-        'utf-8-sig',  # UTF-8 avec BOM
+        'utf-8-sig',
         'latin-1',
-        'iso-8859-1',
         'cp1252',
-        'windows-1252',
         'ascii'
     ]
     
-    for encoding in encodings:
+    # Éliminer les doublons tout en préservant l'ordre
+    seen = set()
+    unique_encodings = []
+    for enc in encodings:
+        if enc and enc not in seen:
+            seen.add(enc)
+            unique_encodings.append(enc)
+    
+    for encoding in unique_encodings:
         try:
             content = file_bytes.decode(encoding)
+            # Vérifier que le décodage est cohérent
+            content.encode(encoding)  # Si ça ne plante pas, c'est bon
             return content, encoding
-        except (UnicodeDecodeError, LookupError):
+        except (UnicodeDecodeError, UnicodeEncodeError, LookupError):
             continue
     
-    # En dernier recours, forcer UTF-8 avec remplacement
-    return file_bytes.decode('utf-8', errors='replace'), 'utf-8 (avec remplacement)'
+    # En dernier recours, ISO-8859-1 avec remplacement
+    return file_bytes.decode('iso-8859-1', errors='replace'), 'iso-8859-1 (avec remplacement)'
 
 def process_xml_robust(content):
     """Traite le XML ligne par ligne pour une robustesse maximale."""
@@ -157,7 +201,7 @@ uploaded_files = st.file_uploader(
     "Glissez vos fichiers XML ici ou cliquez pour parcourir",
     type=['xml'],
     accept_multiple_files=True,
-    help="Formats supportés : .xml"
+    help="Formats supportés : .xml (encodage ISO-8859-1 recommandé)"
 )
 
 if uploaded_files:
@@ -172,9 +216,16 @@ if uploaded_files:
         total_files = len(uploaded_files)
         total_modifications = 0
         successful_files = 0
+        all_processed_files = []
+        
+        # Barre de progression
+        progress_bar = st.progress(0)
+        status_text = st.empty()
         
         # Traiter chaque fichier
         for idx, file in enumerate(uploaded_files):
+            status_text.text(f"Traitement de {file.name}...")
+            
             with st.container():
                 # Lire le fichier
                 file_bytes = file.read()
@@ -192,6 +243,12 @@ if uploaded_files:
                     if total_mods > 0:
                         total_modifications += total_mods
                         successful_files += 1
+                        all_processed_files.append({
+                            'name': file.name,
+                            'content': result_content,
+                            'encoding': encoding,
+                            'modifications': total_mods
+                        })
                     
                     # Afficher les résultats
                     col1, col2, col3 = st.columns([4, 2, 1])
@@ -216,10 +273,15 @@ if uploaded_files:
                                     st.write(f"... et {len(modifications) - 5} autres")
                     
                     with col3:
-                        # Bouton de téléchargement
+                        # Bouton de téléchargement - Préserver l'encodage original
+                        if encoding.startswith('iso-8859-1'):
+                            output_data = result_content.encode('iso-8859-1', errors='ignore')
+                        else:
+                            output_data = result_content.encode(encoding.split()[0], errors='ignore')
+                        
                         st.download_button(
                             "📥",
-                            data=result_content.encode('utf-8', errors='xmlcharrefreplace'),
+                            data=output_data,
                             file_name=f"modified_{file.name}",
                             mime="application/xml",
                             key=f"dl_{idx}",
@@ -231,6 +293,13 @@ if uploaded_files:
                 
                 if idx < len(uploaded_files) - 1:
                     st.divider()
+            
+            # Mise à jour de la progression
+            progress_bar.progress((idx + 1) / len(uploaded_files))
+        
+        # Nettoyer la barre de progression
+        progress_bar.empty()
+        status_text.empty()
         
         # Résumé final
         st.markdown("---")
@@ -242,25 +311,53 @@ if uploaded_files:
             st.metric("Fichiers modifiés", successful_files)
         with col3:
             st.metric("Total modifications", total_modifications)
+        
+        # Option de téléchargement groupé si plusieurs fichiers modifiés
+        if len(all_processed_files) > 1:
+            st.markdown("---")
+            st.markdown("### 📦 Téléchargement groupé")
+            
+            zip_buffer = io.BytesIO()
+            with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+                for file_info in all_processed_files:
+                    # Encoder selon l'encodage original
+                    if file_info['encoding'].startswith('iso-8859-1'):
+                        file_data = file_info['content'].encode('iso-8859-1', errors='ignore')
+                    else:
+                        file_data = file_info['content'].encode('utf-8', errors='ignore')
+                    
+                    zf.writestr(f"modified_{file_info['name']}", file_data)
+            
+            zip_buffer.seek(0)
+            col1, col2, col3 = st.columns([1, 2, 1])
+            with col2:
+                st.download_button(
+                    "📦 Télécharger tous les fichiers modifiés (ZIP)",
+                    data=zip_buffer.getvalue(),
+                    file_name="xml_modifications.zip",
+                    mime="application/zip",
+                    use_container_width=True
+                )
 
 else:
     # Instructions
     st.info("👆 Commencez par charger vos fichiers XML")
     
-    with st.expander("📖 Mode d'emploi"):
+    with st.expander("📖 Mode d'emploi", expanded=True):
         st.markdown("""
         ### Comment utiliser cette application ?
         
         1. **Chargez vos fichiers XML** en cliquant sur le bouton ci-dessus
         2. **Cliquez sur "Lancer le traitement"**
-        3. **Téléchargez les fichiers modifiés** individuellement
+        3. **Téléchargez les fichiers modifiés** individuellement ou en groupe (ZIP)
         
         ### Que fait l'application ?
         
         - Recherche les valeurs entre guillemets au format `"X - Description"` dans les balises Description
         - Met à jour les balises PositionLevel existantes avec la valeur complète
         - Ajoute les balises PositionLevel manquantes
-        - Préserve le format XML original (namespaces, encodage, accents)
+        - **Préserve l'encodage ISO-8859-1** et tous les caractères accentués
+        - Conserve le format XML original (namespaces, indentation)
         
         ### Exemple de transformation
         
@@ -279,7 +376,7 @@ else:
     
     # Fichier de test
     st.markdown("### 🧪 Fichier de test")
-    test_content = """<?xml version="1.0" encoding="UTF-8"?>
+    test_content = """<?xml version="1.0" encoding="ISO-8859-1"?>
 <Jobs>
     <Job>
         <Description>Opérateur machine "A - Peu Qualifié"</Description>
@@ -288,11 +385,15 @@ else:
     <Job>
         <Description>Technicien "B - Qualifié"</Description>
     </Job>
+    <Job>
+        <Description>Ingénieur système "C - Très Qualifié"</Description>
+        <PositionLevel>C</PositionLevel>
+    </Job>
 </Jobs>"""
     
     st.download_button(
-        "📥 Télécharger un fichier de test",
-        data=test_content.encode('utf-8'),
+        "📥 Télécharger un fichier de test ISO-8859-1",
+        data=test_content.encode('iso-8859-1'),
         file_name="test_smurfit.xml",
         mime="application/xml"
     )
